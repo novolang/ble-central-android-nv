@@ -1,0 +1,250 @@
+// ble_android: the Central of an Android phone, an implementation of `GattCentral`.
+//
+// The functions are the runtime's (bin/runtime/mobile/novo_rt_android_ble.c) and the Java classes of the toolchain's dex that it calls; an app that
+// calls them is linked with both and carries the dex.  Everything here runs on the program's thread: the platform's callbacks copy into a ring and the
+// program drains it with `next_event`, which parks the task that waits.  A built program for another target does not link, because the symbols exist in
+// the Android runtime only.
+//
+//   let c = ble_android.central()
+//   match c.start()
+//       Some(e) => println(e.message())
+//       None    => session.open_link(c, session.pump(), peer, central.connect_default(), 517)
+//
+// What the platform does that a program would otherwise see:
+//   - it runs one GATT operation at a time, and the Java classes queue them, so operations may be issued back to back and complete in order;
+//   - it keeps a cache of a device's services, which a firmware update makes stale: the first discovery of a link throws the cache away;
+//   - it ends a failed connection and a lost link with the same state change, which `decode.event_of` tells apart;
+//   - it owns bonding: `Security.Encrypted` and `Security.Authenticated` ask for a bond and the system shows its own dialog.
+
+use std.bytes
+use central
+use decode
+
+@ffi(library = "c", symbol = "novo_android_ble_open")
+fn c_open() -> i32 [ffi]
+
+@ffi(library = "c", symbol = "novo_android_ble_adapter")
+fn c_adapter() -> i32 [ffi]
+
+@ffi(library = "c", symbol = "novo_android_ble_scan_start")
+fn c_scan_start(uuids: Str, prefix: Str, address: Str) -> i32 [ffi]
+
+@ffi(library = "c", symbol = "novo_android_ble_scan_stop")
+fn c_scan_stop() -> i32 [ffi]
+
+@ffi(library = "c", symbol = "novo_android_ble_connect")
+fn c_connect(address: Str, security: i32) -> i32 [ffi]
+
+@ffi(library = "c", symbol = "novo_android_ble_disconnect")
+fn c_disconnect(handle: i32) -> i32 [ffi]
+
+@ffi(library = "c", symbol = "novo_android_ble_discover")
+fn c_discover(handle: i32) -> i32 [ffi]
+
+@ffi(library = "c", symbol = "novo_android_ble_services")
+fn c_services(handle: i32) -> Bytes [ffi]
+
+@ffi(library = "c", symbol = "novo_android_ble_read")
+fn c_read(handle: i32, idx: i32) -> i32 [ffi]
+
+@ffi(library = "c", symbol = "novo_android_ble_write")
+fn c_write(handle: i32, idx: i32, data: Bytes, ack: i32) -> i32 [ffi]
+
+@ffi(library = "c", symbol = "novo_android_ble_subscribe")
+fn c_subscribe(handle: i32, idx: i32, mode: i32) -> i32 [ffi]
+
+@ffi(library = "c", symbol = "novo_android_ble_request_mtu")
+fn c_request_mtu(handle: i32, mtu: i32) -> i32 [ffi]
+
+@ffi(library = "c", symbol = "novo_android_ble_priority")
+fn c_priority(handle: i32, p: i32) -> i32 [ffi]
+
+@ffi(library = "c", symbol = "novo_android_ble_phy")
+fn c_phy(handle: i32, tx: i32, rx: i32) -> i32 [ffi]
+
+@ffi(library = "c", symbol = "novo_android_ble_event_us")
+fn c_event_us() -> i64 [ffi]
+
+@ffi(library = "c", symbol = "novo_android_ble_now_us")
+fn c_now_us() -> i64 [ffi]
+
+@ffi(library = "c", symbol = "novo_android_ble_event_next")
+fn c_event_next(timeout_ms: i32) -> i32 [ffi]
+
+@ffi(library = "c", symbol = "novo_android_ble_event_handle")
+fn c_event_handle() -> i32 [ffi]
+
+@ffi(library = "c", symbol = "novo_android_ble_event_status")
+fn c_event_status() -> i32 [ffi]
+
+@ffi(library = "c", symbol = "novo_android_ble_event_a")
+fn c_event_a() -> i32 [ffi]
+
+@ffi(library = "c", symbol = "novo_android_ble_event_data")
+fn c_event_data() -> Bytes [ffi]
+
+@ffi(library = "c", symbol = "novo_android_ble_event_text")
+fn c_event_text() -> Bytes [ffi]
+
+@ffi(library = "c", symbol = "novo_android_ble_stat")
+fn c_stat(k: i32) -> i32 [ffi]
+
+// The Central of the phone: the table of its links.
+pub struct AndroidCentral
+    t: Table
+
+// The Central of the phone, not yet open.  `start` loads the Java classes into the app; every other call needs it done.
+pub fn central() -> AndroidCentral
+    AndroidCentral { t: decode.table() }
+
+impl AndroidCentral
+    // Loads the Java classes into the app.  An error says why not: the app has no dex, or the phone has no adapter.
+    // cov: skip — the runtime's functions exist in an Android app only; tests/mobile/test_android_ble.sh runs this on a phone
+    fn start(self) -> ?BleError [ffi]
+        let rc = c_open() as Int
+        if rc == 0
+            return None
+        Some(central.error(E_UNSUPPORTED,
+            "the Bluetooth bridge did not open (${rc}): -2 means the app has no dex, -3 that the phone has no adapter"))
+
+    // Asks for the PHYs of a link, as masks: 1 is 1M, 2 is 2M, 4 is coded.  Advisory, like the priority: the phone and the device settle on what both have, and
+    // `link_info` says what they settled on once the platform has told.  The trait has no call for it, so this one is the implementation's own.
+    // cov: skip — see start
+    fn request_phy(self, link: LinkId, tx: Int, rx: Int) -> ?BleError [ffi]
+        decode.done(c_phy(link.id as i32, tx as i32, rx as i32) as Int, "request_phy")
+
+    // Asks the platform for the PHYs the link has now; they arrive as an event the table keeps for `link_info`.
+    // cov: skip — see start
+    fn read_phy(self, link: LinkId) -> ?BleError [ffi]
+        decode.done(c_phy(link.id as i32, 0 - 1, 0) as Int, "read_phy")
+
+    // What the table knows of a link's radio parameters, as [interval in microseconds, latency in events, supervision timeout in milliseconds, transmit PHY,
+    // receive PHY, MTU]; 0 for what the platform has not told.  The interval comes from a callback that is hidden API on some versions, so it may stay 0.
+    fn link_info(self, link: LinkId) -> [Int]
+        decode.link_info_of(self.t, link.id)
+
+    // When the event `next_event` returned last was posted by the platform's thread, and the time now, on one clock in microseconds.  The difference of the
+    // two is how long the event waited in the ring, and the difference of two posting times is the time between two events on the radio's side of the phone.
+    // cov: skip — see start
+    fn last_event_us(self) -> Int [ffi]
+        c_event_us() as Int
+
+    // cov: skip — see start
+    fn now_us(self) -> Int [ffi]
+        c_now_us() as Int
+
+    // The counters of the runtime, for a log: events posted, events lost, operations queued, refreshes of the platform's cache asked and done.
+    // cov: skip — see start
+    fn stats(self) -> [Int] [ffi]
+        [c_stat(0) as Int, c_stat(1) as Int, c_stat(2) as Int, c_stat(3) as Int, c_stat(4) as Int]
+
+// The next event the runtime holds, as raw fields.
+// cov: skip — see start
+fn read_raw(kind: Int) -> Raw [ffi]
+    Raw { kind: kind,
+        handle: c_event_handle() as Int,
+        status: c_event_status() as Int,
+        a: c_event_a() as Int,
+        text: bytes.to_str(c_event_text()),
+        data: bytes.to_byte_list(c_event_data()) }
+
+// After a discovery that succeeded, reads the services the Java side holds into the table, so `services` answers without a call into the runtime.
+// cov: skip — see start
+fn keep_services(t: Table, e: CentralEvent) [ffi, mutate]
+    match e
+        Discovered(link, status) =>
+            if status == 0
+                decode.set_services(t,
+                    link.id,
+                    decode.services_of(link, bytes.to_byte_list(c_services(link.id as i32))))
+        _                        => ()
+
+impl GattCentral[ffi] for AndroidCentral
+    fn caps(self) -> Caps
+        Caps { priority: true, bonding: true, phy_2m: false, background: false, max_mtu: 517 }
+
+    // cov: skip — see start
+    fn adapter(self) -> AdapterState [ffi]
+        decode.adapter_state(c_adapter() as Int)
+
+    // cov: skip — see start
+    fn scan_start(self, filter: ScanFilter) -> ?BleError [ffi, mutate]
+        let address = match filter.only
+            Some(p) => central.peer_key(p)
+            None    => ""
+        decode.done(c_scan_start(decode.uuid_list(filter.services), filter.name_prefix, address) as Int,
+            "scan_start")
+
+    // cov: skip — see start
+    fn scan_stop(self) [ffi, mutate]
+        let _rc = c_scan_stop()
+
+    // cov: skip — see start
+    fn connect(self, p: PeerId, opts: ConnectOptions) -> Result<LinkId, BleError> [ffi, mutate]
+        let rc = c_connect(central.peer_key(p), decode.sec_level(opts.security) as i32) as Int
+        if rc <= 0
+            return Err(decode.error_of(rc, "connect"))
+        decode.remember(self.t, rc, central.peer_key(p))
+        Ok(LinkId { id: rc })
+
+    // cov: skip — see start
+    fn disconnect(self, link: LinkId) [ffi, mutate]
+        let _rc = c_disconnect(link.id as i32)
+
+    // cov: skip — see start
+    fn discover(self, link: LinkId) -> ?BleError [ffi, mutate]
+        decode.done(c_discover(link.id as i32) as Int, "discover")
+
+    fn services(self, link: LinkId) -> [ServiceInfo]
+        decode.services_of_link(self.t, link.id)
+
+    // cov: skip — see start
+    fn read(self, link: LinkId, ch: CharRef) -> ?BleError [ffi, mutate]
+        decode.done(c_read(link.id as i32, ch.idx as i32) as Int, "read")
+
+    // cov: skip — see start
+    fn write(self, link: LinkId, ch: CharRef, data: [u8], ack: Bool) -> ?BleError [ffi, mutate]
+        decode.done(c_write(link.id as i32, ch.idx as i32, decode.to_bytes(data), (if ack then 1 else 0)) as Int,
+            "write")
+
+    // cov: skip — see start
+    fn subscribe(self, link: LinkId, ch: CharRef, mode: SubMode) -> ?BleError [ffi, mutate]
+        let m = match mode
+            SubMode.Off      => 0
+            SubMode.Notify   => 1
+            SubMode.Indicate => 2
+        decode.done(c_subscribe(link.id as i32, ch.idx as i32, m as i32) as Int, "subscribe")
+
+    // cov: skip — see start
+    fn request_mtu(self, link: LinkId, mtu: Int) -> ?BleError [ffi, mutate]
+        decode.done(c_request_mtu(link.id as i32, mtu as i32) as Int, "request_mtu")
+
+    fn max_write(self, link: LinkId, ack: Bool) -> Int
+        decode.max_write_of(self.t, link.id)
+
+    // cov: skip — see start
+    fn priority(self, link: LinkId, p: Priority) -> ?BleError [ffi, mutate]
+        let n = match p
+            Priority.LowPower => 0
+            Priority.Balanced => 1
+            Priority.High     => 2
+        decode.done(c_priority(link.id as i32, n as i32) as Int, "priority")
+
+    // cov: skip — see start
+    fn next_event(self, timeout_ms: Int) -> ?CentralEvent [ffi, mutate]
+        let t0 = c_now_us() as Int
+        var wait = timeout_ms
+        for _i in 0..64
+            let kind = c_event_next(wait as i32) as Int
+            if kind == 0
+                return None
+            match decode.event_of(self.t, read_raw(kind))
+                Some(e) =>
+                    keep_services(self.t, e)
+                    return Some(e)
+                None    =>
+                    // An event the table keeps for itself (the radio's): the wait goes on for what is left of the time.
+                    wait = timeout_ms - (c_now_us() as Int - t0) / 1000
+                    if wait < 0
+                        wait = 0
+        None

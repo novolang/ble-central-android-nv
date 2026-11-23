@@ -1,0 +1,27 @@
+[package]
+name        = "ble-central-android-nv"
+version     = "0.1.0"
+description = "The Central role of Bluetooth LE on an Android phone, as an implementation of the GattCentral trait of ble-central-nv: scan with filters, connect, discover, read, write with and without a response, notifications and indications, the MTU and the longest write, the connection priority, a bond as a request, and every link loss as an event.  It binds the runtime of an app built with `novo mobile build` and the Java classes of the toolchain's dex; the permissions it needs are declared as package metadata."
+license     = "Apache-2.0"
+stability   = "experimental"
+category    = "tooling"
+
+# `app`: the backend names the runtime's own functions (`novo_android_ble_*`) through `@ffi`, which no host package may do, and it is built for a phone only.
+# The modules that decode what the runtime reports reach nothing and are tested on the host.
+layer       = "app"
+tags        = ["mobile", "android", "bluetooth", "ble", "gatt", "central"]
+repository  = "https://github.com/novolang/ble-central-android-nv"
+maintainers = ["novo-lang"]
+novo        = ">= 0.26.0"
+
+# A library: no `main`, so `novo pkg build` type-checks and effect-checks every module under `src/` and writes no binary.
+
+# What an app that links this package asks the phone for; `novo mobile build` refuses an app that does not list it.
+[mobile]
+permissions = ["bluetooth"]
+
+[docs.pages]
+"README.md" = "Bluetooth LE Central on an Android phone"
+
+[dependencies]
+ble-central-nv = { path = "../ble-central-nv" }

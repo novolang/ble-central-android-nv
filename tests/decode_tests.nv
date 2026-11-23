@@ -1,0 +1,312 @@
+// decode_tests: what the runtime reports becomes the events and values of ble-central-nv.
+//
+//   novo test tests/decode_tests.nv
+
+use std.test
+use std.bytes
+use central
+use ble_android
+use decode
+
+fn nothing() -> [u8]
+    let v: [u8] = []
+    v
+
+fn bytes3() -> [u8]
+    let v: [u8] = [1, 2, 3]
+    v
+
+fn raw(kind: Int, handle: Int, status: Int, a: Int) -> Raw
+    Raw { kind: kind, handle: handle, status: status, a: a, text: "", data: bytes3() }
+
+@test
+fn test_a_scan_result_splits_the_address_from_the_name() [mutate]
+    let t = decode.table()
+    let r = Raw { kind: 1,
+        handle: 0,
+        status: 0 - 61,
+        a: 1,
+        text: "AA:BB:CC:DD:EE:FF\tNovo\tRover",
+        data: bytes3() }
+    match decode.event_of(t, r)
+        Some(ScanResult(p, rssi, name, adv)) =>
+            test.assert_eq(central.peer_key(p), "AA:BB:CC:DD:EE:FF")
+            test.assert_eq(rssi, 0 - 61)
+            test.assert_eq(name, "Novo\tRover")
+            test.assert_eq(list.len(adv), 3)
+        _                                    => test.assert(false)
+    let bare = Raw { kind: 1, handle: 0, status: 0, a: 0, text: "AA:01", data: nothing() }
+    match decode.event_of(t, bare)
+        Some(ScanResult(p, _, name, _)) =>
+            test.assert_eq(central.peer_key(p), "AA:01")
+            test.assert_eq(name, "")
+        _                               => test.assert(false)
+
+@test
+fn test_a_connection_that_came_up_and_ended_is_connected_then_disconnected() [mutate]
+    let t = decode.table()
+    decode.remember(t, 1, "AA:01")
+    match decode.event_of(t, raw(3, 1, 0, 2))
+        Some(Connected(l, p, status)) =>
+            test.assert_eq(l.id, 1)
+            test.assert_eq(central.peer_key(p), "AA:01")
+            test.assert_eq(status, 0)
+        _                             => test.assert(false)
+    match decode.event_of(t, raw(3, 1, 19, 0))
+        Some(Disconnected(l, reason)) =>
+            test.assert_eq(l.id, 1)
+            test.assert_eq(reason, 19)
+        _                             => test.assert(false)
+
+@test
+fn test_a_connection_that_never_came_up_is_a_connected_with_a_status() [mutate]
+    let t = decode.table()
+    decode.remember(t, 1, "AA:01")
+    match decode.event_of(t, raw(3, 1, 147, 0))
+        Some(Connected(_, p, status)) =>
+            test.assert_eq(central.peer_key(p), "AA:01")
+            test.assert_eq(status, 147)
+        _                             => test.assert(false)
+    decode.remember(t, 2, "AA:02")
+    match decode.event_of(t, raw(3, 2, 0, 0))
+        Some(Connected(_, _, status)) => test.assert_eq(status, 1)
+        _                             => test.assert(false)
+    match decode.event_of(t, raw(3, 9, 5, 0))
+        Some(Connected(_, p, status)) =>
+            test.assert_eq(central.peer_key(p), "")
+            test.assert_eq(status, 5)
+        _                             => test.assert(false)
+
+@test
+fn test_a_link_that_goes_down_twice_is_reported_once_as_a_loss() [mutate]
+    let t = decode.table()
+    decode.remember(t, 1, "AA:01")
+    let _up = decode.event_of(t, raw(3, 1, 0, 2))
+    let _down = decode.event_of(t, raw(3, 1, 8, 0))
+    match decode.event_of(t, raw(3, 1, 8, 0))
+        Some(Connected(_, _, status)) => test.assert_eq(status, 8)
+        _                             => test.assert(false)
+    decode.remember(t, 1, "AA:03")
+    match decode.event_of(t, raw(3, 1, 0, 2))
+        Some(Connected(_, p, _)) => test.assert_eq(central.peer_key(p), "AA:03")
+        _                        => test.assert(false)
+
+@test
+fn test_the_operations_of_a_link_end_in_their_events() [mutate]
+    let t = decode.table()
+    decode.remember(t, 1, "AA:01")
+    match decode.event_of(t, raw(4, 1, 0, 0))
+        Some(Discovered(l, s)) =>
+            test.assert_eq(l.id, 1)
+            test.assert_eq(s, 0)
+        _                      => test.assert(false)
+    match decode.event_of(t, raw(5, 1, 0, 4))
+        Some(ReadDone(l, ch, s, d)) =>
+            test.assert_eq(ch.idx, 4)
+            test.assert_eq(ch.link, 1)
+            test.assert_eq(list.len(d), 3)
+            test.assert_eq(l.id + s, 1)
+        _                           => test.assert(false)
+    match decode.event_of(t, raw(6, 1, 3, 5))
+        Some(WriteDone(_, ch, s)) =>
+            test.assert_eq(ch.idx, 5)
+            test.assert_eq(s, 3)
+        _                         => test.assert(false)
+    match decode.event_of(t, raw(7, 1, 0, 6))
+        Some(Notified(_, ch, d)) =>
+            test.assert_eq(ch.idx, 6)
+            test.assert_eq(list.len(d), 3)
+        _                        => test.assert(false)
+    match decode.event_of(t, raw(8, 1, 0, 7))
+        Some(SubscribeDone(_, ch, _)) => test.assert_eq(ch.idx, 7)
+        _                             => test.assert(false)
+    match decode.event_of(t, raw(10, 1, 0, 2))
+        Some(PriorityChanged(_, s)) => test.assert_eq(s, 0)
+        _                           => test.assert(false)
+    match decode.event_of(t, raw(11, 1, 0, 0))
+        Some(ServicesChanged(l)) => test.assert_eq(l.id, 1)
+        _                        => test.assert(false)
+    match decode.event_of(t, raw(12, 1, 0, 1))
+        Some(BondChanged(_, bonded)) => test.assert(bonded)
+        _                            => test.assert(false)
+    match decode.event_of(t, raw(12, 1, 0, 0))
+        Some(BondChanged(_, bonded)) => test.assert(not bonded)
+        _                            => test.assert(false)
+
+@test
+fn test_the_adapter_scan_failure_and_loss_events() [mutate]
+    let t = decode.table()
+    match decode.event_of(t, raw(13, 0, 0, 1))
+        Some(AdapterChanged(s)) => test.assert(s == AdapterState.On)
+        _                       => test.assert(false)
+    test.assert(decode.adapter_state(0) == AdapterState.Off)
+    test.assert(decode.adapter_state(2) == AdapterState.NoPermission)
+    test.assert(decode.adapter_state(3) == AdapterState.Unsupported)
+    match decode.event_of(t, raw(2, 0, 3, 0))
+        Some(ScanFailed(code)) => test.assert_eq(code, 3)
+        _                      => test.assert(false)
+    match decode.event_of(t, raw(99, 0, 0, 12))
+        Some(Dropped(n)) => test.assert_eq(n, 12)
+        _                => test.assert(false)
+    test.assert(decode.event_of(t, raw(77, 0, 0, 0)) == None)
+
+@test
+fn test_the_mtu_is_kept_and_sets_the_longest_write() [mutate]
+    let t = decode.table()
+    decode.remember(t, 1, "AA:01")
+    test.assert_eq(decode.max_write_of(t, 1), 20)
+    match decode.event_of(t, raw(9, 1, 0, 247))
+        Some(MtuChanged(_, mtu, s)) =>
+            test.assert_eq(mtu, 247)
+            test.assert_eq(s, 0)
+        _                           => test.assert(false)
+    test.assert_eq(decode.max_write_of(t, 1), 244)
+    let _large = decode.event_of(t, raw(9, 1, 0, 517))
+    test.assert_eq(decode.max_write_of(t, 1), 512)
+    let _back = decode.event_of(t, raw(9, 1, 0, 247))
+    let _failed = decode.event_of(t, raw(9, 1, 133, 100))
+    test.assert_eq(decode.max_write_of(t, 1), 244)
+    let _stray = decode.event_of(t, raw(9, 40, 0, 100))
+    test.assert_eq(decode.max_write_of(t, 40), 0)
+    test.assert_eq(decode.max_write_of(t, 0), 0)
+    decode.remember(t, 1, "AA:01")
+    test.assert_eq(decode.max_write_of(t, 1), 20)
+
+fn uuid_bytes(first: Int) -> [u8]
+    var out: [u8] = []
+    for i in 0..16
+        list.push(out, (first + i) as u8)
+    out
+
+// A table of one service with two characteristics: the service, its count, then each characteristic's UUID, properties and index.
+fn blob() -> [u8]
+    var b: [u8] = uuid_bytes(0)
+    list.push(b, 0 as u8)
+    list.push(b, 2 as u8)
+    for k in 0..2
+        for x in uuid_bytes(32 + 16 * k)
+            list.push(b, x)
+        list.push(b, 0 as u8)
+        list.push(b, (18 + k) as u8)
+        list.push(b, 0 as u8)
+        list.push(b, k as u8)
+    b
+
+@test
+fn test_the_table_of_services_is_read() [mutate]
+    let link = LinkId { id: 3 }
+    let s = decode.services_of(link, blob())
+    test.assert_eq(list.len(s), 1)
+    test.assert_eq(central.uuid_text(s[0].uuid), "00010203-0405-0607-0809-0a0b0c0d0e0f")
+    test.assert_eq(list.len(s[0].chars), 2)
+    test.assert_eq(s[0].chars[0].props, 18)
+    test.assert_eq(s[0].chars[1].props, 19)
+    test.assert_eq(s[0].chars[1].ref.idx, 1)
+    test.assert_eq(s[0].chars[1].ref.link, 3)
+    test.assert_eq(central.uuid_text(s[0].chars[1].uuid), "30313233-3435-3637-3839-3a3b3c3d3e3f")
+
+@test
+fn test_a_table_that_is_cut_off_ends_where_it_ends() [mutate]
+    let link = LinkId { id: 1 }
+    let b = blob()
+    test.assert_eq(list.len(decode.services_of(link, nothing())), 0)
+    let head = b[0:12]
+    test.assert_eq(list.len(decode.services_of(link, head)), 0)
+    let few = b[0:30]
+    let cut = decode.services_of(link, few)
+    test.assert_eq(list.len(cut), 1)
+    test.assert_eq(list.len(cut[0].chars), 0)
+    let one = b[0:50]
+    let s = decode.services_of(link, one)
+    test.assert_eq(list.len(s), 1)
+    test.assert_eq(list.len(s[0].chars), 1)
+
+@test
+fn test_services_are_kept_per_link() [mutate]
+    let t = decode.table()
+    decode.remember(t, 1, "AA:01")
+    decode.remember(t, 2, "AA:02")
+    decode.set_services(t, 1, decode.services_of(LinkId { id: 1 }, blob()))
+    decode.set_services(t, 77, decode.services_of(LinkId { id: 77 }, blob()))
+    test.assert_eq(list.len(decode.services_of_link(t, 1)), 1)
+    test.assert_eq(list.len(decode.services_of_link(t, 2)), 0)
+    test.assert_eq(list.len(decode.services_of_link(t, 77)), 0)
+    test.assert_eq(list.len(decode.services_of_link(t, 0 - 1)), 0)
+    decode.remember(t, 1, "AA:01")
+    test.assert_eq(list.len(decode.services_of_link(t, 1)), 0)
+
+@test
+fn test_the_text_of_a_result_splits_at_the_first_tab() [mutate]
+    test.assert_eq(list.len(decode.split_text("a")), 2)
+    test.assert_eq(decode.split_text("a\tb")[1], "b")
+    test.assert_eq(decode.split_text("a\tb\tc")[1], "b\tc")
+
+@test
+fn test_a_negative_result_of_the_runtime_is_an_error_with_its_cause() [mutate]
+    test.assert_eq(decode.error_of(0 - 4, "read").code, E_PERMISSION)
+    test.assert_eq(decode.error_of(0 - 2, "read").code, E_NOT_CONNECTED)
+    test.assert_eq(decode.error_of(0 - 5, "read").code, E_BAD_ARGUMENT)
+    test.assert_eq(decode.error_of(0 - 6, "read").code, E_BUSY)
+    test.assert_eq(decode.error_of(0 - 1, "read").code, E_UNSUPPORTED)
+    test.assert(str.contains(decode.error_of(0 - 4, "scan_start").message(), "scan_start"))
+
+@test
+fn test_a_result_of_zero_is_no_error_and_a_negative_one_is() [mutate]
+    test.assert(decode.done(0, "read") == None)
+    match decode.done(0 - 4, "read")
+        Some(e) => test.assert_eq(e.code, E_PERMISSION)
+        None    => test.assert(false)
+
+@test
+fn test_the_arguments_of_the_runtime_are_made_from_the_values_of_the_trait() [mutate]
+    test.assert_eq(decode.sec_level(Security.Unsecured), 0)
+    test.assert_eq(decode.sec_level(Security.Encrypted), 1)
+    test.assert_eq(decode.sec_level(Security.Authenticated), 2)
+    test.assert_eq(decode.uuid_list([]), "")
+    test.assert_eq(decode.uuid_list([central.uuid16(0x180D), central.uuid16(0x180F)]),
+        "0000180d-0000-1000-8000-00805f9b34fb,0000180f-0000-1000-8000-00805f9b34fb")
+    test.assert_eq(bytes.len(decode.to_bytes(bytes3())), 3)
+    test.assert_eq(bytes.len(decode.to_bytes(nothing())), 0)
+
+@test
+fn test_the_central_answers_what_it_knows_without_the_runtime() [mutate]
+    let c = ble_android.central()
+    test.assert(c.caps().priority)
+    test.assert(c.caps().bonding)
+    test.assert_eq(c.caps().max_mtu, 517)
+    test.assert_eq(c.max_write(LinkId { id: 1 }, true), 0)
+    test.assert_eq(list.len(c.services(LinkId { id: 1 })), 0)
+
+@test
+fn test_the_radio_events_are_kept_for_link_info_and_are_no_events() [mutate]
+    let t = decode.table()
+    decode.remember(t, 1, "AA:01")
+    test.assert_eq(decode.link_info_of(t, 1)[0], 0)
+    test.assert_eq(decode.link_info_of(t, 1)[5], 23)
+    let update = Raw { kind: 14, handle: 1, status: 0, a: 36, text: "0 500", data: nothing() }
+    test.assert(decode.event_of(t, update) == None)
+    let phy = Raw { kind: 15, handle: 1, status: 0, a: 34, text: "", data: nothing() }
+    test.assert(decode.event_of(t, phy) == None)
+    let info = decode.link_info_of(t, 1)
+    test.assert_eq(info[0], 45000)
+    test.assert_eq(info[1], 0)
+    test.assert_eq(info[2], 5000)
+    test.assert_eq(info[3], 2)
+    test.assert_eq(info[4], 2)
+    // A parameter set that carries no timeout, a failed event and a link the table does not know change nothing more.
+    let bare = Raw { kind: 14, handle: 1, status: 0, a: 6, text: "2", data: nothing() }
+    let _a = decode.event_of(t, bare)
+    test.assert_eq(decode.link_info_of(t, 1)[0], 7500)
+    test.assert_eq(decode.link_info_of(t, 1)[1], 2)
+    let failed = Raw { kind: 15, handle: 1, status: 133, a: 17, text: "", data: nothing() }
+    let _b = decode.event_of(t, failed)
+    test.assert_eq(decode.link_info_of(t, 1)[3], 2)
+    let stray = Raw { kind: 15, handle: 40, status: 0, a: 17, text: "", data: nothing() }
+    let _c = decode.event_of(t, stray)
+    test.assert_eq(decode.link_info_of(t, 40)[3], 0)
+    // The Central answers from its table.
+    let c = ble_android.central()
+    test.assert_eq(c.link_info(LinkId { id: 1 })[0], 0)
+    // A link made again starts with nothing known.
+    decode.remember(t, 1, "AA:01")
+    test.assert_eq(decode.link_info_of(t, 1)[0], 0)
