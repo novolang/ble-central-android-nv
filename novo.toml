@@ -24,4 +24,4 @@ permissions = ["bluetooth"]
 "README.md" = "Bluetooth LE Central on an Android phone"
 
 [dependencies]
-ble-central-nv = { path = "../ble-central-nv" }
+ble-central-nv = "^0.1.0"
