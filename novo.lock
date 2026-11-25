@@ -3,6 +3,6 @@
 [ble-central-nv]
 source = "registry"
 url = "https://registry.novo-lang.org"
-req = "^0.1.0"
-version = "0.1.0"
-hash = "086a1613cee20367ab86c69a8b150458899f51e49e7ae594ece2ec4ff99109c9"
+req = "^0.1.1"
+version = "0.1.1"
+hash = "7412bad807ba0baf3d5a7c94e08d59cf0c6038faadeb430686d8a0c04cd02b56"
