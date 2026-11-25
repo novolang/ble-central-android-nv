@@ -65,11 +65,13 @@ pub struct Table
     st: Links
 
 // An empty table.
-pub fn table() -> Table
+pub @tier(app)
+fn table() -> Table
     Table { st: Links { peers: [""], up: [false], mtus: [23], services: [[]], radio: [[0, 0, 0, 0, 0]] } }
 
 // Records the peer of a new link.
-pub fn remember(t: Table, handle: Int, peer: Str) [mutate]
+pub @tier(app)
+fn remember(t: Table, handle: Int, peer: Str) [mutate]
     var st = t.st
     for _i in 0..handle + 1
         if list.len(st.peers) <= handle
@@ -84,28 +86,33 @@ pub fn remember(t: Table, handle: Int, peer: Str) [mutate]
     st.services[handle] = []
     st.radio[handle] = [0, 0, 0, 0, 0]
 
+@tier(app)
 fn peer_of(t: Table, handle: Int) -> PeerId
     if handle >= 0 and handle < list.len(t.st.peers)
         return central.peer(t.st.peers[handle])
     central.peer("")
 
+@tier(app)
 fn was_up(t: Table, handle: Int) -> Bool
     handle >= 0 and handle < list.len(t.st.up) and t.st.up[handle]
 
 // The services a discovery found, kept for `services`.
-pub fn set_services(t: Table, handle: Int, found: [ServiceInfo]) [mutate]
+pub @tier(app)
+fn set_services(t: Table, handle: Int, found: [ServiceInfo]) [mutate]
     var st = t.st
     if handle >= 0 and handle < list.len(st.services)
         st.services[handle] = found[:]
 
 // The services the last discovery of the link found.
-pub fn services_of_link(t: Table, handle: Int) -> [ServiceInfo]
+pub @tier(app)
+fn services_of_link(t: Table, handle: Int) -> [ServiceInfo]
     if handle >= 0 and handle < list.len(t.st.services)
         return t.st.services[handle][:]
     []
 
 // The largest write on the link: the MTU less the 3 bytes of the ATT header, and never more than the 512 bytes an attribute holds; 0 for a link the table does not know.
-pub fn max_write_of(t: Table, handle: Int) -> Int
+pub @tier(app)
+fn max_write_of(t: Table, handle: Int) -> Int
     if handle >= 1 and handle < list.len(t.st.mtus)
         let room = t.st.mtus[handle] - 3
         return if room > 512 then 512 else room
@@ -113,13 +120,15 @@ pub fn max_write_of(t: Table, handle: Int) -> Int
 
 // The radio parameters of a link as [interval in microseconds, latency, supervision timeout in milliseconds, transmit PHY, receive PHY, MTU]; zeros for
 // what the platform has not told, and for a link the table does not know.
-pub fn link_info_of(t: Table, handle: Int) -> [Int]
+pub @tier(app)
+fn link_info_of(t: Table, handle: Int) -> [Int]
     if handle >= 1 and handle < list.len(t.st.radio)
         let r = t.st.radio[handle]
         return [r[0] * 1250, r[1], r[2] * 10, r[3], r[4], t.st.mtus[handle]]
     [0, 0, 0, 0, 0, 0]
 
 // Keeps what a radio event told of a link: kind 14 the interval, the latency and the timeout, kind 15 the PHYs; an event that failed tells nothing.
+@tier(app)
 fn note_radio(t: Table, r: Raw) [mutate]
     var st = t.st
     if r.status != 0 or r.handle < 1 or r.handle >= list.len(st.radio)
@@ -134,13 +143,15 @@ fn note_radio(t: Table, r: Raw) [mutate]
         st.radio[r.handle][3] = r.a / 16
         st.radio[r.handle][4] = r.a % 16
 
+@tier(app)
 fn set_up(t: Table, handle: Int, up: Bool) [mutate]
     var st = t.st
     if handle >= 0 and handle < list.len(st.up)
         st.up[handle] = up
 
 // The state of the adapter the runtime reports as a number.
-pub fn adapter_state(n: Int) -> AdapterState
+pub @tier(app)
+fn adapter_state(n: Int) -> AdapterState
     match n
         1 => AdapterState.On
         2 => AdapterState.NoPermission
@@ -148,14 +159,16 @@ pub fn adapter_state(n: Int) -> AdapterState
         _ => AdapterState.Off
 
 // The name and address of a scan result: the text is the address, a tab and the name.
-pub fn split_text(text: Str) -> [Str]
+pub @tier(app)
+fn split_text(text: Str) -> [Str]
     let parts = str.split(text, "\t")
     if list.len(parts) >= 2
         return [parts[0], str.join(parts[1:list.len(parts)], "\t")]
     [text, ""]
 
 // The event for a raw one; None for a kind this version does not know and for the radio events, which the table keeps for `link_info_of`.
-pub fn event_of(t: Table, r: Raw) -> ?CentralEvent [mutate]
+pub @tier(app)
+fn event_of(t: Table, r: Raw) -> ?CentralEvent [mutate]
     let link = LinkId { id: r.handle }
     let ch = CharRef { link: r.handle, idx: r.a }
     match r.kind
@@ -195,12 +208,14 @@ pub fn event_of(t: Table, r: Raw) -> ?CentralEvent [mutate]
         99 => Some(Dropped(r.a))
         _  => None
 
+@tier(app)
 fn u16_at(b: [u8], i: Int) -> Int
     b[i] as Int * 256 + b[i + 1] as Int
 
 // The services of a link from the table the runtime keeps: for each service its UUID (16 bytes) and its number of characteristics (2), then for
 // each characteristic its UUID (16), properties (2) and index (2).  A table that is cut off ends the list where it ends.
-pub fn services_of(link: LinkId, b: [u8]) -> [ServiceInfo]
+pub @tier(app)
+fn services_of(link: LinkId, b: [u8]) -> [ServiceInfo]
     var out: [ServiceInfo] = []
     var at = 0
     let n = list.len(b)
@@ -222,7 +237,8 @@ pub fn services_of(link: LinkId, b: [u8]) -> [ServiceInfo]
     out
 
 // The error for a negative result of the runtime's calls.
-pub fn error_of(rc: Int, what: Str) -> BleError
+pub @tier(app)
+fn error_of(rc: Int, what: Str) -> BleError
     if rc == 0 - 4
         return central.error(E_PERMISSION, "${what}: the app lacks the Bluetooth permission")
     if rc == 0 - 2
@@ -234,27 +250,31 @@ pub fn error_of(rc: Int, what: Str) -> BleError
     central.error(E_UNSUPPORTED, "${what}: the phone has no Bluetooth LE, or the runtime was not opened (${rc})")
 
 // The result of a call that answers 0 or an error: nothing, or the error.
-pub fn done(rc: Int, what: Str) -> ?BleError
+pub @tier(app)
+fn done(rc: Int, what: Str) -> ?BleError
     if rc == 0
         return None
     Some(decode.error_of(rc, what))
 
 // The number for a security level.
-pub fn sec_level(s: Security) -> Int
+pub @tier(app)
+fn sec_level(s: Security) -> Int
     match s
         Security.Unsecured     => 0
         Security.Encrypted     => 1
         Security.Authenticated => 2
 
 // The UUIDs as text, separated by commas.
-pub fn uuid_list(us: [Uuid]) -> Str
+pub @tier(app)
+fn uuid_list(us: [Uuid]) -> Str
     var texts: [Str] = []
     for u in us
         list.push(texts, central.uuid_text(u))
     str.join(texts, ",")
 
 // A list of bytes as the runtime's Bytes buffer.
-pub fn to_bytes(data: [u8]) -> Bytes
+pub @tier(app)
+fn to_bytes(data: [u8]) -> Bytes
     var ints: [Int] = []
     for i in 0..list.len(data)
         list.push(ints, data[i] as Int)

@@ -9,6 +9,12 @@ Every published version, newest first.  This file is on the publish allow-list, 
   advisory like the priority.  The interval comes from `onConnectionUpdated`, a hidden callback of the framework, so it can stay 0 on a phone that does not call it.
 - `AndroidCentral.last_event_us` and `now_us`: the time the platform's thread posted the event `next_event` returned last, and the time now, on one clock, for timing a request.
 
+## 0.1.1
+
+- The functions of the Android implementation are declared `@tier(app)`, which is what they are: they allocate (a `Uuid`, an event, a string of text) and the host and phone packages use
+  `std` freely.  A function with no `@tier` is checked at the tier of the project that holds the package, so an embedded-tier project that held 0.1.0, as
+  `orbit/noble-examples` does through `smp-client-nv`, failed its build with E4000 on functions it never calls.  No signature and no behaviour changed.
+
 ## 0.1.0
 
 First release.
