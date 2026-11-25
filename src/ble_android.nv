@@ -94,11 +94,13 @@ pub struct AndroidCentral
     t: Table
 
 // The Central of the phone, not yet open.  `start` loads the Java classes into the app; every other call needs it done.
-pub fn central() -> AndroidCentral
+pub @tier(app)
+fn central() -> AndroidCentral
     AndroidCentral { t: decode.table() }
 
 impl AndroidCentral
     // Loads the Java classes into the app.  An error says why not: the app has no dex, or the phone has no adapter.
+    @tier(app)
     // cov: skip — the runtime's functions exist in an Android app only; tests/mobile/test_android_ble.sh runs this on a phone
     fn start(self) -> ?BleError [ffi]
         let rc = c_open() as Int
@@ -109,36 +111,43 @@ impl AndroidCentral
 
     // Asks for the PHYs of a link, as masks: 1 is 1M, 2 is 2M, 4 is coded.  Advisory, like the priority: the phone and the device settle on what both have, and
     // `link_info` says what they settled on once the platform has told.  The trait has no call for it, so this one is the implementation's own.
+    @tier(app)
     // cov: skip — see start
     fn request_phy(self, link: LinkId, tx: Int, rx: Int) -> ?BleError [ffi]
         decode.done(c_phy(link.id as i32, tx as i32, rx as i32) as Int, "request_phy")
 
     // Asks the platform for the PHYs the link has now; they arrive as an event the table keeps for `link_info`.
+    @tier(app)
     // cov: skip — see start
     fn read_phy(self, link: LinkId) -> ?BleError [ffi]
         decode.done(c_phy(link.id as i32, 0 - 1, 0) as Int, "read_phy")
 
     // What the table knows of a link's radio parameters, as [interval in microseconds, latency in events, supervision timeout in milliseconds, transmit PHY,
     // receive PHY, MTU]; 0 for what the platform has not told.  The interval comes from a callback that is hidden API on some versions, so it may stay 0.
+    @tier(app)
     fn link_info(self, link: LinkId) -> [Int]
         decode.link_info_of(self.t, link.id)
 
     // When the event `next_event` returned last was posted by the platform's thread, and the time now, on one clock in microseconds.  The difference of the
     // two is how long the event waited in the ring, and the difference of two posting times is the time between two events on the radio's side of the phone.
+    @tier(app)
     // cov: skip — see start
     fn last_event_us(self) -> Int [ffi]
         c_event_us() as Int
 
+    @tier(app)
     // cov: skip — see start
     fn now_us(self) -> Int [ffi]
         c_now_us() as Int
 
     // The counters of the runtime, for a log: events posted, events lost, operations queued, refreshes of the platform's cache asked and done.
+    @tier(app)
     // cov: skip — see start
     fn stats(self) -> [Int] [ffi]
         [c_stat(0) as Int, c_stat(1) as Int, c_stat(2) as Int, c_stat(3) as Int, c_stat(4) as Int]
 
 // The next event the runtime holds, as raw fields.
+@tier(app)
 // cov: skip — see start
 fn read_raw(kind: Int) -> Raw [ffi]
     Raw { kind: kind,
@@ -149,6 +158,7 @@ fn read_raw(kind: Int) -> Raw [ffi]
         data: bytes.to_byte_list(c_event_data()) }
 
 // After a discovery that succeeded, reads the services the Java side holds into the table, so `services` answers without a call into the runtime.
+@tier(app)
 // cov: skip — see start
 fn keep_services(t: Table, e: CentralEvent) [ffi, mutate]
     match e
@@ -160,13 +170,16 @@ fn keep_services(t: Table, e: CentralEvent) [ffi, mutate]
         _                        => ()
 
 impl GattCentral[ffi] for AndroidCentral
+    @tier(app)
     fn caps(self) -> Caps
         Caps { priority: true, bonding: true, phy_2m: false, background: false, max_mtu: 517 }
 
+    @tier(app)
     // cov: skip — see start
     fn adapter(self) -> AdapterState [ffi]
         decode.adapter_state(c_adapter() as Int)
 
+    @tier(app)
     // cov: skip — see start
     fn scan_start(self, filter: ScanFilter) -> ?BleError [ffi, mutate]
         let address = match filter.only
@@ -175,10 +188,12 @@ impl GattCentral[ffi] for AndroidCentral
         decode.done(c_scan_start(decode.uuid_list(filter.services), filter.name_prefix, address) as Int,
             "scan_start")
 
+    @tier(app)
     // cov: skip — see start
     fn scan_stop(self) [ffi, mutate]
         let _rc = c_scan_stop()
 
+    @tier(app)
     // cov: skip — see start
     fn connect(self, p: PeerId, opts: ConnectOptions) -> Result<LinkId, BleError> [ffi, mutate]
         let rc = c_connect(central.peer_key(p), decode.sec_level(opts.security) as i32) as Int
@@ -187,26 +202,32 @@ impl GattCentral[ffi] for AndroidCentral
         decode.remember(self.t, rc, central.peer_key(p))
         Ok(LinkId { id: rc })
 
+    @tier(app)
     // cov: skip — see start
     fn disconnect(self, link: LinkId) [ffi, mutate]
         let _rc = c_disconnect(link.id as i32)
 
+    @tier(app)
     // cov: skip — see start
     fn discover(self, link: LinkId) -> ?BleError [ffi, mutate]
         decode.done(c_discover(link.id as i32) as Int, "discover")
 
+    @tier(app)
     fn services(self, link: LinkId) -> [ServiceInfo]
         decode.services_of_link(self.t, link.id)
 
+    @tier(app)
     // cov: skip — see start
     fn read(self, link: LinkId, ch: CharRef) -> ?BleError [ffi, mutate]
         decode.done(c_read(link.id as i32, ch.idx as i32) as Int, "read")
 
+    @tier(app)
     // cov: skip — see start
     fn write(self, link: LinkId, ch: CharRef, data: [u8], ack: Bool) -> ?BleError [ffi, mutate]
         decode.done(c_write(link.id as i32, ch.idx as i32, decode.to_bytes(data), (if ack then 1 else 0)) as Int,
             "write")
 
+    @tier(app)
     // cov: skip — see start
     fn subscribe(self, link: LinkId, ch: CharRef, mode: SubMode) -> ?BleError [ffi, mutate]
         let m = match mode
@@ -215,13 +236,16 @@ impl GattCentral[ffi] for AndroidCentral
             SubMode.Indicate => 2
         decode.done(c_subscribe(link.id as i32, ch.idx as i32, m as i32) as Int, "subscribe")
 
+    @tier(app)
     // cov: skip — see start
     fn request_mtu(self, link: LinkId, mtu: Int) -> ?BleError [ffi, mutate]
         decode.done(c_request_mtu(link.id as i32, mtu as i32) as Int, "request_mtu")
 
+    @tier(app)
     fn max_write(self, link: LinkId, ack: Bool) -> Int
         decode.max_write_of(self.t, link.id)
 
+    @tier(app)
     // cov: skip — see start
     fn priority(self, link: LinkId, p: Priority) -> ?BleError [ffi, mutate]
         let n = match p
@@ -230,6 +254,7 @@ impl GattCentral[ffi] for AndroidCentral
             Priority.High     => 2
         decode.done(c_priority(link.id as i32, n as i32) as Int, "priority")
 
+    @tier(app)
     // cov: skip — see start
     fn next_event(self, timeout_ms: Int) -> ?CentralEvent [ffi, mutate]
         let t0 = c_now_us() as Int
